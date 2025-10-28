@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-function check_permissions {
+function checkPermissions {
     echo "Checking and Setting Permissions"
 
     sudo chown root:shadow /etc/shadow
@@ -135,3 +135,24 @@ function hardenIPtables {
     sudo iptables -A INPUT -i lo -j ACCEPT
     sudo iptables -A OUTPUT -o lo -j ACCEPT
 }
+
+function setupSELinux {
+    echo -e "\e[33mEnabling SELinux\e[0m"
+    setenforce true
+    echo -e "\e[33mRunning restorecon /\e[0m"
+    restorecon -R /
+
+    cp /etc/selinux/config /etc/selinux/.config_backup1
+    echo "SELINUX=enforcing" >> /etc/selinux/config
+
+    sestatus
+}
+
+function runAll {
+    checkPermissions
+    bulkDisableServices
+    hardenIPtables
+    setupSELinux
+}
+
+runAll
