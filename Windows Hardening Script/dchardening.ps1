@@ -67,8 +67,8 @@ Write-Host "All necessary files should be in this dir." -ForegroundColor Green
 
 # Copy local hardening script to sysvol so local hardening can start ASAP without pulling down the script on each machine
 $domainDN = (Get-ADDomain).DistinguishedName
-cp "./$localHardeningFile" "\\$domainDN\sysvol\$domainDN\$localHardeningFile"
-cp "./$wwHardeningFile" "\\$domainDN\sysvol\$domainDN\$wwHardeningFile"
+cp "./$localHardeningFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$localHardeningFile"
+cp "./$wwHardeningFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$wwHardeningFile"
 
 function GetCompetitionUsers {
     try {
