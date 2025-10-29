@@ -1392,13 +1392,10 @@ if ($confirmation.toLower() -eq "y") {
 }
 
 #UI additions nathan did####################################################################
-# disable printing service for coercion attacks
-Stop-Service spooler -Force; Set-Service spooler -StartupType Disabled -Verbose
-Write-Host "disabled printing on dc"
-
 
 Set-ADDomain -Identity (Get-ADDomain).DistinguishedName -Replace @{ "ms-DS-MachineAccountQuota" = 0 }
 Write-Host "chaning machine quote to disallow new accounts to be made"
+############################################################################################
 
 # Run Windows Updates
 $confirmation = Prompt-Yes-No -Message "Enter the 'Run Windows Updates' function? THIS WILL TAKE A WHILE... (y/n)"
