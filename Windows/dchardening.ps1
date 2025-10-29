@@ -66,6 +66,9 @@ Write-Host "All necessary files should be in this dir." -ForegroundColor Green
 $domainDN = (Get-ADDomain).DistinguishedName
 cp "./$localHardeningFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$localHardeningFile"
 cp "./$wwHardeningFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$wwHardeningFile"
+cp "./$portsFile" "$SysvolPath\$portsFile" -Force
+cp "./$advancedAuditingFile" "$SysvolPath\$advancedAuditingFile" -Force
+cp "./$patchURLFile" "$SysvolPath\$patchURLFile" -Force
 
 function GetCompetitionUsers {
     try {
