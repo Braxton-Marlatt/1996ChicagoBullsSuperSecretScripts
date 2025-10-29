@@ -1,26 +1,69 @@
 #Start-Transcript "$env:Temp"
 
-$ccdcRepoWindowsHardeningPath = "https://raw.githubusercontent.com/BYU-CCDC/public-ccdc-resources/main/windows/hardening"
+# Define file variables
 $portsFile = "ports.json"
-$usersFile = "users.txt"
+$usersFile = "users.txt" # This file is generated locally, not needed from SYSVOL
 $advancedAuditingFile = "advancedAuditing.ps1"
 $patchURLFile = "patchURLs.json"
 
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# Define SYSVOL path using DNS domain name (ensure script runs on a domain-joined machine)
+$SysvolPath = "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN"
+
+# Define GitHub path as a fallback
+$ccdcRepoWindowsHardeningPath = "https://raw.githubusercontent.com/Braxton-Marlatt/1996ChicagoBullsSuperSecretScripts/refs/heads/main/Windows"
+
+# --- MODIFIED FILE CHECKING/COPYING BLOCK ---
+Write-Host "Checking for necessary dependency files..." -ForegroundColor Cyan
+
+# List of files needed from SYSVOL or GitHub
 $neededFiles = @($portsFile, $advancedAuditingFile, $patchURLFile)
+
 foreach ($file in $neededFiles) {
     $filename = $(Split-Path -Path $file -Leaf)
-    try {
-        if (-not (Test-Path "$pwd\$filename")) {
-            Invoke-WebRequest -Uri "$ccdcRepoWindowsHardeningPath/$file" -OutFile "$pwd\$filename"
+    $localFilePath = Join-Path $pwd $filename
+    $sysvolFilePath = Join-Path $SysvolPath $filename
+
+    # 1. Check if the file already exists locally
+    if (Test-Path $localFilePath) {
+        Write-Host "- Found '$filename' locally." -ForegroundColor Green
+        continue # Skip to the next file if already present
+    }
+
+    Write-Host "- '$filename' not found locally. Checking SYSVOL..." -ForegroundColor Yellow
+
+    # 2. Check if the file exists in SYSVOL
+    if (Test-Path $sysvolFilePath) {
+        Write-Host "- Found '$filename' in SYSVOL. Copying locally..." -ForegroundColor Cyan
+        try {
+            Copy-Item -Path $sysvolFilePath -Destination $localFilePath -Force -ErrorAction Stop
+            Write-Host "- Successfully copied '$filename' from SYSVOL." -ForegroundColor Green
+        } catch {
+            Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
+            Write-Host "ERROR copying '$filename' from SYSVOL: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "Please check permissions and SYSVOL path: $sysvolFilePath" -ForegroundColor Yellow
+            Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
+            exit # Exit if we can't copy from SYSVOL
         }
-    } catch {
-        Write-Host $_.Exception.Message -ForegroundColor Yellow
-        Write-Host "Error Occurred..."
-        Write-Host "Download $file from $ccdcRepoWindowsHardeningPath"
-        exit
+    } else {
+        # 3. File not found locally or in SYSVOL - Try downloading (will fail if airgapped)
+        Write-Host "- '$filename' not found in SYSVOL. Attempting download from GitHub..." -ForegroundColor Yellow
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 # Ensure TLS 1.2 for GitHub
+        try {
+            Invoke-WebRequest -Uri "$ccdcRepoWindowsHardeningPath/$file" -OutFile $localFilePath -ErrorAction Stop
+            Write-Host "- Successfully downloaded '$filename' from GitHub." -ForegroundColor Green
+        } catch {
+            Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
+            Write-Host "ERROR downloading '$filename' from GitHub: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "Could not find '$filename' locally, in SYSVOL, or download it." -ForegroundColor Red
+            Write-Host "Please ensure '$filename' is available in SYSVOL ($SysvolPath)" -ForegroundColor Yellow
+            Write-Host "or place it manually in the current directory ($pwd)." -ForegroundColor Yellow
+            Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
+            exit # Exit if download fails
+        }
     }
 }
+
+Write-Host "All necessary dependency files are present locally." -ForegroundColor Cyan
 
 function GetCompetitionUsers {
     try {
@@ -421,38 +464,6 @@ function Disable-Unnecessary-Services {
     } catch {
         Write-Host $_.Exception.Message -ForegroundColor Yellow
         Write-Host "Error Occurred..."
-    }
-}
-function Download-Install-Setup-Splunk {
-    param([string]$Version, [string]$IP)
-
-    $splunkBeta = $true #((Prompt-Yes-No -Message "Install Splunk from deltabluejay repo? (y/n)").toLower() -eq 'y')
-    #Write-Host $splunkBeta
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        if ($splunkBeta) {
-            #$downloadURL = "https://raw.githubusercontent.com/deltabluejay/public-ccdc-resources/refs/heads/dev/splunk/splunk.ps1"
-            $downloadURL = "https://raw.githubusercontent.com/BYU-CCDC/public-ccdc-resources/main/splunk/splunk.ps1"
-        }
-        if (-not $splunkBeta) {
-            $downloadURL = "https://raw.githubusercontent.com/BYU-CCDC/public-ccdc-resources/main/splunk/splunk.ps1"
-        }
-
-        Invoke-WebRequest -Uri $downloadURL -OutFile ./splunk.ps1
-
-        $splunkServer = "$($IP):9997" # Replace with your Splunk server IP and receiving port
-
-        # Install splunk using downloaded script
-        if ((Get-ChildItem ./splunk.ps1).Length -lt 6000) {
-            ./splunk.ps1 $Version $SplunkServer
-        } else {
-            ./splunk.ps1 $Version $SplunkServer "member"
-        }
-
-    } catch {
-        Write-Host $_.Exception.Message -ForegroundColor Yellow
-        Write-Host "Error Occurred..."
-        Update-Log "Configure Splunk" "Failed with error: $($_.Exception.Message)"
     }
 }
 
@@ -1066,15 +1077,7 @@ Write-Host "Enabling Firewall logging successful and blocked connections" -Foreg
 Set-NetFirewallProfile -Profile Domain,Public,Private -LogAllowed True -LogBlocked True
 
 
-$confirmation = Prompt-Yes-No -Message "Enter the 'Configure Splunk' function? (y/n)"
-if ($confirmation.toLower() -eq "y") {
-    Write-Host "`n***Configuring Splunk***" -ForegroundColor Magenta
-    $SplunkIP = Read-Host "`nInput IP address of Splunk Server"
-    $SplunkVersion = Read-Host "`nInput OS Version (7, 8, 10, 11, 2012, 2016, 2019, 2022): "
-    Download-Install-Setup-Splunk -Version $SplunkVersion -IP $SplunkIP
-} else {
-    Write-Host "Skipping..." -ForegroundColor Red
-}
+
 
 
 Write-Host "`n***Installing EternalBlue Patch***" -ForegroundColor Magenta
