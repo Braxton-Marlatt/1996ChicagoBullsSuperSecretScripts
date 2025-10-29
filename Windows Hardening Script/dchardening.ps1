@@ -1,9 +1,6 @@
 Import-Module ActiveDirectory
 Import-Module GroupPolicy
 
-#$ProgressPreference = 'SilentlyContinue'
-
-$ccdcRepoWindowsHardeningPath = "https://raw.githubusercontent.com/BYU-CCDC/public-ccdc-resources/main/windows/hardening"
 $portsFile = "ports.json"
 $advancedAuditingFile = "advancedAuditing.ps1"
 $patchURLFile = "patchURLs.json"
@@ -675,8 +672,6 @@ function Create-Good-GPO {
 }
 
 function Import-GPOs {
-    Expand-Archive -Path ./gpos.zip
-
     $gpos = Get-ChildItem ./gpos
 
     $gpos | % {
