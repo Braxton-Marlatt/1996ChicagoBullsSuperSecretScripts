@@ -3,7 +3,7 @@ Import-Module GroupPolicy
 
 $ProgressPreference = 'SilentlyContinue'
 
-#$ccdcRepoWindowsHardeningPath = "https://raw.githubusercontent.com/BYU-CCDC/public-ccdc-resources/main/windows/hardening"
+$ccdcRepoWindowsHardeningPath = "https://raw.githubusercontent.com/BYU-CCDC/public-ccdc-resources/main/windows/hardening"
 $portsFile = "ports.json"
 $advancedAuditingFile = "advancedAuditing.ps1"
 $patchURLFile = "patchURLs.json"
@@ -39,23 +39,9 @@ netsh advfirewall firewall add rule name="UDP Inbound SMB" dir=in action=block p
 netsh advfirewall firewall add rule name="TCP Outbound SMB" dir=out action=block protocol=TCP localport=445
 netsh advfirewall firewall add rule name="UDP Outbound SMB" dir=out action=block protocol=UDP localport=445
 
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$neededFiles = @($portsFile, $advancedAuditingFile, $patchURLFile, $groupManagementFile, $mainFunctionsFile, $splunkFile, $localHardeningFile, $wwHardeningFile)
-foreach ($file in $neededFiles) {
-    $filename = $(Split-Path -Path $file -Leaf)
-    try {
-        if (-not (Test-Path "$pwd\$filename")) {
-            Invoke-WebRequest -Uri "$ccdcRepoWindowsHardeningPath/$file" -OutFile "$pwd\$filename"
-        }
-    } catch {
-        Write-Host $_.Exception.Message -ForegroundColor Yellow
-        Write-Host "Error Occurred..."
-        Write-Host "Download $file from $ccdcRepoWindowsHardeningPath"
-        exit
-    }
-}
 
-Write-Host "All necessary files have been downloaded." -ForegroundColor Green
+
+Write-Host "All necessary files should be in this dir." -ForegroundColor Green
 
 # Copy local hardening script to sysvol so local hardening can start ASAP without pulling down the script on each machine
 $domainDN = (Get-ADDomain).DistinguishedName
@@ -715,38 +701,7 @@ function Import-GPOs {
 
     
 }
-function Download-Install-Setup-Splunk {
-    param([string]$Version, [string]$IP)
 
-    $splunkBeta = $true #((Prompt-Yes-No -Message "Install Splunk from deltabluejay repo? (y/n)").toLower() -eq 'y')
-    #Write-Host $splunkBeta
-    try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        if ($splunkBeta) {
-            #$downloadURL = "https://raw.githubusercontent.com/deltabluejay/public-ccdc-resources/refs/heads/dev/splunk/splunk.ps1"
-            $downloadURL = "https://raw.githubusercontent.com/BYU-CCDC/public-ccdc-resources/main/splunk/splunk.ps1"
-        }
-        if (-not $splunkBeta) {
-            $downloadURL = "https://raw.githubusercontent.com/BYU-CCDC/public-ccdc-resources/main/splunk/splunk.ps1"
-        }
-
-        Invoke-WebRequest -Uri $downloadURL -OutFile ./splunk.ps1
-
-        $splunkServer = "$($IP):9997" # Replace with your Splunk server IP and receiving port
-
-        # Install splunk using downloaded script
-        if ((Get-ChildItem ./splunk.ps1).Length -lt 6000) {
-            ./splunk.ps1 $Version $SplunkServer
-        } else {
-            ./splunk.ps1 $Version $SplunkServer "dc" -local "../.."
-        }
-
-    } catch {
-        Write-Host $_.Exception.Message -ForegroundColor Yellow
-        Write-Host "Error Occurred..."
-        Update-Log "Configure Splunk" "Failed with error: $($_.Exception.Message)"
-    }
-}
 
 function Install-EternalBluePatch {
     try {
@@ -1006,90 +961,6 @@ function Enable-Auditing {
         Write-Host $_.Exception.Message -ForegroundColor Yellow
         Write-Host "Error Occurred..."
         Update-Log "Enable Auditing" "Failed with error: $($_.Exception.Message)"
-    }
-}
-
-function Configure-Sysmon-Connect-Splunk {
-    try {
-        # Define base URL and local directory for the Sysmon files
-        $sysmonPath = "$ccdcRepoWindowsHardeningPath/sysmon"
-        $localSysmonDir = ".\sysmon"
-
-        # Ensure the Sysmon directory exists
-        if (-not (Test-Path $localSysmonDir)) {
-            New-Item -Path $localSysmonDir -ItemType Directory
-        }
-
-        # File names to be downloaded
-        $sysmonZip = "Sysmon.zip"
-        $configXml = "sysmonconfig-export.xml"
-
-        # Full paths for the files to be saved
-        $sysmonZipPath = Join-Path $localSysmonDir $sysmonZip
-        $configXmlPath = Join-Path $localSysmonDir $configXml
-
-        # Download Sysmon and the configuration file using Invoke-WebRequest
-        Write-Host "Downloading Sysmon..."
-        Invoke-WebRequest -Uri "$sysmonPath/$sysmonZip" -OutFile $sysmonZipPath
-
-        Write-Host "Downloading Sysmon configuration..."
-        Invoke-WebRequest -Uri "$sysmonPath/$configXml" -OutFile $configXmlPath
-
-        # Unzip Sysmon
-        Write-Host "Extracting Sysmon..."
-        $sysmonExtractPath = Join-Path $localSysmonDir "extracted"
-        Expand-Archive -Path $sysmonZipPath -DestinationPath $sysmonExtractPath -Force
-
-        # Install Sysmon with the configuration file
-        Write-Host "Installing Sysmon with configuration..."
-        Start-Process -FilePath "$sysmonExtractPath\Sysmon.exe" -ArgumentList "-accepteula -i $configXmlPath" -Wait -NoNewWindow
-
-        # Define the Splunk Universal Forwarder inputs.conf path
-        $splunkInputsConfPath = "C:\Program Files\SplunkUniversalForwarder\etc\system\local\inputs.conf"
-
-        # Ensure the directory for inputs.conf exists
-        if (-not (Test-Path (Split-Path -Path $splunkInputsConfPath -Parent))) {
-            New-Item -Path (Split-Path -Path $splunkInputsConfPath -Parent) -ItemType Directory -Force
-        }
-
-        # Define the new Splunk input configuration for Sysmon
-        $sysmonInputsConf = @"
-[WinEventLog://Microsoft-Windows-Sysmon/Operational]
-disabled = false
-index = windows
-sourcetype = XmlWinEventLog:Microsoft-Windows-Sysmon
-renderXml=false
-"@
-
-        # Check if the specific Sysmon configuration already exists in inputs.conf
-        if (Test-Path $splunkInputsConfPath) {
-            $inputsContent = Get-Content -Path $splunkInputsConfPath -Raw
-            if ($inputsContent -notmatch 'WinEventLog://Microsoft-Windows-Sysmon/Operational') {
-                Write-Host "Appending new Sysmon configuration to inputs.conf..."
-                if ($inputsContent -ne "") {
-                    # Ensure two new lines precede the new configuration if the file isn't empty
-                    $sysmonInputsConf = "`n`n" + $sysmonInputsConf
-                }
-                Add-Content -Path $splunkInputsConfPath -Value $sysmonInputsConf
-            } else {
-                Write-Host "Sysmon configuration already exists in inputs.conf."
-            }
-        } else {
-            Write-Host "Creating new inputs.conf and adding Sysmon configuration..."
-            Add-Content -Path $splunkInputsConfPath -Value $sysmonInputsConf
-        }
-
-        # Restart Splunk Universal Forwarder to apply changes
-        Write-Host "Restarting Splunk Universal Forwarder to apply changes..."
-        Stop-Service -Name SplunkForwarder
-        Start-Service -Name SplunkForwarder
-
-        Write-Host "Sysmon installation and Splunk configuration complete." -ForegroundColor Green
-        Update-Log "Configure Sysmon and Connect to Splunk" "Executed successfully"
-    } catch {
-        Write-Host $_.Exception.Message -ForegroundColor Yellow
-        Write-Host "Error Occurred..."
-        Update-Log "Configure Sysmon and Connect to Splunk" "Failed with error: $($_.Exception.Message)"
     }
 }
 
@@ -1433,26 +1304,6 @@ Consider, after starting the splunk install:
 Remember to check back periodically to type in credentials as needed
 "@
 
-# Configure Splunk
-$confirmation = Prompt-Yes-No -Message "Enter the 'Configure Splunk' function? (y/n)"
-if ($confirmation.toLower() -eq "y") {
-    Write-Host "`n***Configuring Splunk...***" -ForegroundColor Magenta
-    $SplunkIP = Read-Host "`nInput IP address of Splunk Server"
-    $SplunkVersion = Read-Host "`nInput OS Version (7, 8, 10, 11, 2012, 2016, 2019, 2022): "
-    Download-Install-Setup-Splunk -Version $SplunkVersion -IP $SplunkIP
-} else {
-    Write-Host "Skipping..." -ForegroundColor Red
-}
-
-# Configure Sysmon and Connect to Splunk
-$confirmation = Prompt-Yes-No -Message "Enter the 'Configure Sysmon and Connect to Splunk' function? (y/n)"
-if ($confirmation.toLower() -eq "y") {
-    Write-Host "`n***Configuring Sysmon and Connecting to Splunk...***" -ForegroundColor Magenta
-    Configure-Sysmon-Connect-Splunk
-} else {
-    Write-Host "Skipping..." -ForegroundColor Red
-}
-
 
 # Harden IIS
 $confirmation = Prompt-Yes-No -Message "Enter the 'Harden IIS' function? THIS ONLY WORKS WITH IIS 7.0 AND OLDER (y/n)"
@@ -1521,7 +1372,7 @@ if ($confirmation.toLower() -eq "y") {
     Write-Host "Skipping..." -ForegroundColor Red
 }
 
-#UI additions nathan did
+#UI additions nathan did####################################################################
 # disable printing service for coercion attacks
 Stop-Service spooler -Force; Set-Service spooler -StartupType Disabled -Verbose
 Write-Host "disabled printing on dc"
