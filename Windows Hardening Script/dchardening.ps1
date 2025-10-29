@@ -21,8 +21,32 @@ dnscmd localhost /zoneexport $env:USERDNSDOMAIN backup\$env:USERDNSDOMAIN
 dnscmd localhost /zoneexport _msdcs.$env:USERDNSDOMAIN backup\_msdcs.$env:USERDNSDOMAIN
 
 # Export group memberships before editing stuff
-mkdir ~/groups
-get-adgroup -filter * | foreach-object { $_ | get-adgroupmember | export-csv -Path "~/groups/$($_.name).txt" }
+Write-Host "DEBUG: Creating groups directory..."
+mkdir ~/groups -ErrorAction SilentlyContinue # Add SilentlyContinue in case it already exists
+Write-Host "DEBUG: Starting group member export loop..."
+$Groups = Get-ADGroup -Filter *
+foreach ($Group in $Groups) {
+    $GroupName = $Group.Name
+    # Sanitize filename (replace invalid characters with underscore)
+    $SafeGroupName = $GroupName -replace '[\\/:*?"<>|]', '_'
+    $OutputPath = "~/groups/$($SafeGroupName).txt"
+
+    Write-Host "DEBUG: Processing group '$GroupName' (Saving to '$SafeGroupName.txt')..."
+    try {
+        # Get members and export
+        $Group | Get-ADGroupMember | Export-Csv -Path $OutputPath -ErrorAction Stop # Use Stop to ensure catch block runs on error
+        Write-Host "DEBUG: Successfully exported '$GroupName'." -ForegroundColor Green
+    } catch {
+        Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
+        Write-Host "ERROR processing group '$GroupName': $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
+        # Optionally, you might want to 'continue' to the next group instead of stopping:
+        # continue
+        # Or exit immediately to investigate:
+        # exit
+    }
+}
+Write-Host "DEBUG: Finished group member export loop."
 
 # Block SMB initially, we'll turn it back on in the firewall section
 # Inbound rules
@@ -38,8 +62,6 @@ netsh advfirewall firewall add rule name="UDP Inbound SMB" dir=in action=block p
 # Outbound rules
 netsh advfirewall firewall add rule name="TCP Outbound SMB" dir=out action=block protocol=TCP localport=445
 netsh advfirewall firewall add rule name="UDP Outbound SMB" dir=out action=block protocol=UDP localport=445
-
-
 
 Write-Host "All necessary files should be in this dir." -ForegroundColor Green
 
@@ -1380,32 +1402,6 @@ Write-Host "disabled printing on dc"
 
 Set-ADDomain -Identity (Get-ADDomain).DistinguishedName -Replace @{ "ms-DS-MachineAccountQuota" = 0 }
 Write-Host "chaning machine quote to disallow new accounts to be made"
-
-
-###### remove anonymous group from shares
-# Obtain domain name, build LDAP path to the Directory Service object, connect as an ADSI object
-$Dcname = Get-ADDomain | Select-Object -ExpandProperty DistinguishedName
-$Adsi = 'LDAP://CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,' + $Dcname
-$AnonADSI = [ADSI]$Adsi
-
-# Clear the dSHeuristics attribute 
-$AnonADSI.Properties["dSHeuristics"].Clear()
-$AnonADSI.SetInfo()
-
-# Remove ANONYMOUS LOGON read access on CN=Users
-$ADSI = [ADSI]('LDAP://CN=Users,' + $Dcname)
-$Anon = New-Object System.Security.Principal.NTAccount("ANONYMOUS LOGON")
-$SID = $Anon.Translate([System.Security.Principal.SecurityIdentifier])
-$adRights = [System.DirectoryServices.ActiveDirectoryRights] "GenericRead"
-$type = [System.Security.AccessControl.AccessControlType] "Allow"
-$inheritanceType = [System.DirectoryServices.ActiveDirectorySecurityInheritance] "All"
-$ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $SID,$adRights,$type,$inheritanceType
-$ADSI.PSBase.ObjectSecurity.RemoveAccessRule($ace) | Out-Null
-$ADSI.PSBase.CommitChanges()
-
-
-
-
 
 # Run Windows Updates
 $confirmation = Prompt-Yes-No -Message "Enter the 'Run Windows Updates' function? THIS WILL TAKE A WHILE... (y/n)"
