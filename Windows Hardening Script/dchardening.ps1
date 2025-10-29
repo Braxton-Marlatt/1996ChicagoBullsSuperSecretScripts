@@ -1527,7 +1527,8 @@ Stop-Service spooler -Force; Set-Service spooler -StartupType Disabled -Verbose
 Write-Host "disabled printing on dc"
 
 
-
+Set-ADDomain -Identity (Get-ADDomain).DistinguishedName -Replace @{ "ms-DS-MachineAccountQuota" = 0 }
+Write-Host "chaning machine quote to disallow new accounts to be made"
 
 
 
