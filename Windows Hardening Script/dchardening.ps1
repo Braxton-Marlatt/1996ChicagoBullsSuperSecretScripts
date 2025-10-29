@@ -1,7 +1,7 @@
 Import-Module ActiveDirectory
 Import-Module GroupPolicy
 
-$ProgressPreference = 'SilentlyContinue'
+#$ProgressPreference = 'SilentlyContinue'
 
 $ccdcRepoWindowsHardeningPath = "https://raw.githubusercontent.com/BYU-CCDC/public-ccdc-resources/main/windows/hardening"
 $portsFile = "ports.json"
