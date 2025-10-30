@@ -9,6 +9,7 @@ $mainFunctionsFile = "mainFunctionsList.txt"
 $splunkFile = "../../splunk/splunk.ps1"
 $localHardeningFile = "Local-Hardening.ps1"
 $wwHardeningFile = "ww-hardening.ps1"
+$startupFile = "startup.ps1"
 
 # Backup existing firewall rules
 netsh advfirewall export ./firewallbackup.wfw
@@ -69,6 +70,8 @@ cp "./$wwHardeningFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$wwHarde
 cp "./$portsFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$portsFile"
 cp "./$advancedAuditingFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$advancedAuditingFile"
 cp "./$patchURLFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$patchURLFile"
+cp "./$startupFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$startupFile"
+
 function GetCompetitionUsers {
     try {
         # Prompt the user for the first username
