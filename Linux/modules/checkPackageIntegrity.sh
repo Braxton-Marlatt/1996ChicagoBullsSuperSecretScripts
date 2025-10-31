@@ -1,10 +1,14 @@
 #!/bin/bash
 echo "Verifying Package Integrity"
 
-if command -v debsums >/dev/null 2>&1; then
+if command -v apt >/dev/null 2>&1; then
     echo "[+] Detected Debian/Ubuntu system"
+    if ! command -v debsums >/dev/null 2>&1; then
+        echo "[+] Installing debsums..."
+        sudo apt update -y >/dev/null 2>&1
+        sudo apt install -y debsums >/dev/null 2>&1
+    fi
     echo "[+] Running debsums to verify installed package checksums..."
-    sudo apt install -y debsums >/dev/null 2>&1
     sudo debsums -s || echo "[!] Some package files failed integrity check."
     echo "[✓] debsums verification complete."
 
@@ -34,7 +38,6 @@ elif command -v apk >/dev/null 2>&1; then
 
 else
     echo "[!] Could not detect supported package manager for integrity check."
-    return 1
 fi
 
 echo "------------------------------------"

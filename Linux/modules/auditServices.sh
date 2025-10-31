@@ -84,9 +84,3 @@ systemctl list-units --type=service --state=failed --no-pager | tee -a "$REPORT"
 
 echo -e "\n----------------------------------------"
 echo "[✓] Service audit complete. Report saved to: $REPORT"
-
-# Optional: Interactive service management
-read -p "Do you want to interactively disable suspicious services? [y/N] " response
-if [[ "$response" =~ ^[Yy]$ ]]; then
-    manageServices
-fi
