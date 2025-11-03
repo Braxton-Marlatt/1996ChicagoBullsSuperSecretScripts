@@ -1091,6 +1091,89 @@ Upgrade-SMB
 Write-Host "`n***Patching Mimikatz***" -ForegroundColor Magenta
 Patch-Mimikatz
 
+write-host "nathan section here, fixing bad file perms"
+icacls "C:\Program Files" /grant "BUILTIN\Users":(OI)(CI)(RX) /T /C /Q
+icacls "C:\Program Files (x86)" /grant "BUILTIN\Users":(OI)(CI)(RX) /T /C /Q
+
+#gemini written section to then scan for write access to C:\windwos
+# Get the SIDs (Security Identifiers) for common user groups
+$usersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-32-545") # BUILTIN\Users
+$authUsersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-11") # Authenticated Users
+
+# --- List of known-good writable folders to IGNORE ---
+# We ignore these because they are required by the OS.
+# Your AppLocker rules are the correct way to mitigate these.
+$excludedPaths = @(
+    "C:\Windows\Temp",
+    "C:\Windows\Tasks",
+    "C:\Windows\System32\Tasks",
+    "C:\Windows\SysWOW64\Tasks",
+    "C:\Windows\System32\spool\PRINTERS",
+    "C:\Windows\System32\spool\drivers\color",
+    "C:\Windows\System32\spool\SERVERS",
+    "C:\Windows\System32\com\dmp",
+    "C:\Windows\SysWOW64\com\dmp",
+    "C:\Windows\System32\fxstmp",
+    "C:\Windows\SysWOW64\fxstmp",
+    "C:\Windows\Tracing",
+    "C:\Windows\Registration\CRMLog",
+    "C:\Windows\System32\winevt\Logs",
+    "C:\Windows\System32\LogFiles",
+    "C:\Windows\System32\wbem\Logs",
+    "C:\Windows\System32\Microsoft\Crypto\RSA\MachineKeys",
+    "C:\Windows\ServiceProfiles\LocalService",
+    "C:\Windows\ServiceProfiles\NetworkService"
+)
+
+Write-Host "Scanning C:\Windows for unexpected writable folders..." -ForegroundColor Cyan
+Write-Host "Ignoring known required folders (like Temp, Tasks, spool)..."
+
+Get-ChildItem -Path "C:\Windows" -Directory -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+    $path = $_.FullName
+    
+    # Check if the current path is one of the known-good excluded paths
+    $isExcluded = $false
+    foreach ($excluded in $excludedPaths) {
+        if ($path -like "$excluded*" ) {
+            $isExcluded = $true
+            break
+        }
+    }
+
+    # If it's NOT in the exclusion list, then we analyze its permissions
+    if (-not $isExcluded) {
+        try {
+            $acl = Get-Acl -Path $path -ErrorAction SilentlyContinue
+            if ($null -eq $acl) { return }
+
+            # Check each access rule
+            foreach ($accessRule in $acl.Access) {
+                # Check if the rule is for 'Users' or 'Authenticated Users' and if it grants write/modify
+                if (($accessRule.IdentityReference.Value -eq $usersSid.Value) -or ($accessRule.IdentityReference.Value -eq $authUsersSid.Value)) {
+                    
+                    if ($accessRule.FileSystemRights -match "Write" -or $accessRule.FileSystemRights -match "Modify" -or $accessRule.FileSystemRights -match "FullControl") {
+                        
+                        # Found one!
+                        Write-Host "--------------------------------"
+                        Write-Host "SUSPICIOUS Writable Folder Found:" -ForegroundColor Yellow
+                        Write-Host "Path: $path"
+                        Write-Host "User: $($accessRule.IdentityReference)"
+                        Write-Host "Rights: $($accessRule.FileSystemRights)"
+                        Write-Host "--------------------------------"
+                        
+                        # Stop checking this folder's rules and move to the next folder
+                        break 
+                    }
+                }
+            }
+        } catch {
+            # This will catch "Access Denied" errors, which are fine.
+        }
+    }
+}
+
+Write-Host "Scan complete."
+
 
 $confirmation = Prompt-Yes-No -Message "Enter the 'Run Windows Updates' function? (y/n) This might take a while"
 if ($confirmation.toLower() -eq "y") {
