@@ -626,6 +626,13 @@ function Run-Windows-Updates {
     }
 }
 
+function Run-Find-Perms {
+
+
+
+
+
+}
 
 
 
@@ -1091,9 +1098,20 @@ Upgrade-SMB
 Write-Host "`n***Patching Mimikatz***" -ForegroundColor Magenta
 Patch-Mimikatz
 
+
+
 write-host "nathan section here, fixing bad file perms"
 icacls "C:\Program Files" /grant "BUILTIN\Users":(OI)(CI)(RX) /T /C /Q
 icacls "C:\Program Files (x86)" /grant "BUILTIN\Users":(OI)(CI)(RX) /T /C /Q
+
+
+$confirmation = Prompt-Yes-No -Message "Enter the 'scan and fix bad perms' function? (y/n) This WILL take a while"
+if ($confirmation.toLower() -eq "y") {
+    Write-Host "`n***searching for perms***" -ForegroundColor Magenta
+    Run-Find-Perms
+} else {
+    Write-Host "Skipping..." -ForegroundColor Red
+}
 
 #gemini written section to then scan for write access to C:\windwos
 # Get the SIDs (Security Identifiers) for common user groups
