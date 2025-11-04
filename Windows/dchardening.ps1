@@ -4,7 +4,6 @@ Import-Module GroupPolicy
 $portsFile = "ports.json"
 $advancedAuditingFile = "advancedAuditing.ps1"
 $patchURLFile = "patchURLs.json"
-$groupManagementFile = "groupManagement.ps1"
 $mainFunctionsFile = "mainFunctionsList.txt"
 $splunkFile = "../../splunk/splunk.ps1"
 $localHardeningFile = "Local-Hardening.ps1"
@@ -963,7 +962,114 @@ function Enable-UAC {
 
 function Group-Management {
     try {
-        & ".\$groupManagementFile"
+        # --- THIS IS THE CRITICAL FIX ---
+        # Build the allow-list using the users we just created
+        $AllowedAdmins = @(
+            "Administrator",
+            "Domain Admins",
+            "Enterprise Admins",
+            $UserArray[0]  # The main admin from GetCompetitionUsers
+        )
+
+        # --- Clean high-privilege groups ---
+        $HighPrivGroups = @("Administrators", "Domain Admins", "Enterprise Admins", "Schema Admins", "Group Policy Creator Owners")
+        
+        foreach ($groupName in $HighPrivGroups) {
+            Write-Host "Cleaning '$groupName' group. Only allowing: $($AllowedAdmins -join ', ')"
+            try {
+                foreach( $user in (Get-AdGroupMember -Identity $groupName) ){
+                    if( $AllowedAdmins -contains $user.SamAccountName ){
+                        continue
+                    }
+                    Remove-ADGroupMember -Identity $groupName -Member $user.SAMAccountName -confirm:$false
+                    write-host "  - Removed $($user.SAMAccountName) from $groupName"
+                }
+            } catch {
+                write-warning "  - Could not clean $groupName. Group may not exist or is empty."
+            }
+        }
+
+        # --- Empty other dangerous groups entirely ---
+        $GroupsToEmpty = @(
+            "Account Operators",
+            "Hyper-V Administrators",
+            "Event Log Readers",
+            "Remote Management Users",
+            "Storage Replica Administrators",
+            "Access Control Assistance Operators",
+            "Enterprise Key Admins"
+            # Add any other high-priv groups here
+        )
+
+        foreach ($groupName in $GroupsToEmpty) {
+            Write-Host "Emptying group: $groupName"
+            try {
+                Get-ADGroupMember -Identity $groupName | ForEach-Object {
+                    Remove-ADGroupMember -Identity $groupName -Member $_.SAMAccountName -confirm:$false
+                    write-host "  - Removed $($_.SAMAccountName)"
+                }
+            } catch {
+                write-warning "  - $groupName : Group does not exist or is already empty."
+            }
+        }
+
+        # --- Harden 'Guests' and 'Domain Guests' ---
+        Write-Host "Cleaning 'Guests' and 'Domain Guests'"
+        try {
+            $GuestUser = Get-ADUser -Identity "Guest"
+            if( $GuestUser.Enabled -eq "True" ){
+                Disable-ADAccount -Identity $GuestUser.SAMAccountName
+                write-host "  - Disabled Guest Account"
+            }
+            Get-ADGroupMember -Identity "Guests" | Where-Object { $_.SamAccountName -ne "Guest" -and $_.SamAccountName -ne "Domain Guests" } | ForEach-Object {
+                 Remove-ADGroupMember -Identity "Guests" -Member $_.SAMAccountName -confirm:$false
+                 write-host "  - Removed $($_.SAMAccountName) from Guests"
+            }
+            Get-ADGroupMember -Identity "Domain Guests" | Where-Object { $_.SamAccountName -ne "Guest" } | ForEach-Object {
+                 Remove-ADGroupMember -Identity "Domain Guests" -Member $_.SAMAccountName -confirm:$false
+                 write-host "  - Removed $($_.SAMAccountName) from Domain Guests"
+            }
+        } catch {
+            write-warning "  - Could not clean Guest groups."
+        }
+
+        # --- Harden 'Pre-Windows 2000 Compatible Access' ---
+        Write-Host "Hardening 'Pre-Windows 2000 Compatible Access'"
+        try{
+            Remove-ADGroupMember -Identity "Pre-Windows 2000 Compatible Access" -Member "ANONYMOUS LOGON" -Confirm:$false
+            write-host "  - Removed 'ANONYMOUS LOGON'"
+        } catch {}
+        try{
+            Remove-ADGroupMember -Identity "Pre-Windows 2000 Compatible Access" -Member "Everyone" -Confirm:$false
+            write-host "  - Removed 'Everyone'"
+        } catch {}
+
+        # --- Fix Anonymous Access Settings ---
+        Write-Host "Fixing Anonymous access settings (LSA, dSHeuristics, Users container)"
+        try{
+            $RegPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
+            Set-ItemProperty -Path $RegPath -Name "everyoneincludesanonymous" -Value 0 -Force
+            
+            $Dcname = Get-ADDomain | Select-Object -ExpandProperty DistinguishedName
+            $Adsi = 'LDAP://CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,' + $Dcname
+            $AnonADSI = [ADSI]$Adsi
+            $AnonADSI.Properties["dSHeuristics"].Clear()
+            $AnonADSI.SetInfo()
+            
+            $ADSI_Users = [ADSI]('LDAP://CN=Users,' + $Dcname)
+            $Anon = New-Object System.Security.Principal.NTAccount("ANONYMOUS LOGON")
+            $SID = $Anon.Translate([System.Security.Principal.SecurityIdentifier])
+            $adRights = [System.DirectoryServices.ActiveDirectoryRights] "GenericRead"
+            $type = [System.Security.AccessControl.AccessControlType] "Allow"
+            $inheritanceType = [System.DirectoryServices.ActiveDirectorySecurityInheritance] "All"
+            $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $SID,$adRights,$type,$inheritanceType
+            $ADSI_Users.PSBase.ObjectSecurity.RemoveAccessRule($ace) | Out-Null
+            $ADSI_Users.PSBase.CommitChanges()
+            write-host "  - Anonymous hardening complete."
+        } catch {
+            write-warning "  - Failed to fix anonymous access settings."
+        }
+
         Update-Log "Group Management" "Executed successfully"
     } catch {
         Write-Host $_.Exception.Message -ForegroundColor Yellow
