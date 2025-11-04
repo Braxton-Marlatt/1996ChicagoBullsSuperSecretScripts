@@ -1251,6 +1251,8 @@ $confirmation = Prompt-Yes-No -Message "Enter the 'scan and fix bad perms' funct
 if ($confirmation.toLower() -eq "y") {
     Write-Host "`n***searching for perms***" -ForegroundColor Magenta
     Run-Find-Perms #this is the one for users
+	Write-Host "if any found use this to fix"
+	Write-Host "icacls "C:\Path\To\Vulnerable\Folder" /grant 'BUILTIN\Users:(OI)(CI)(RX)' /T /C /Q"
 } else {
     Write-Host "Skipping..." -ForegroundColor Red
 }
@@ -1259,6 +1261,10 @@ $confirmation = Prompt-Yes-No -Message "Enter the 'scan and fix bad perms for ex
 if ($confirmation.toLower() -eq "y") {
     Write-Host "`n***searching for perms***" -ForegroundColor Magenta
     Run-Program-Perms
+	Write-Host "fix this with:"
+	Write-Host "icacls 'C:\Windows\System32\RandomFolder' /grant 'BUILTIN\Users'(OI)(CI)(RX) /C /Q"
+	write-host "or maybe this:"
+	write-host "icacls 'C:\Path\To\Vulnerable\Folder' /grant 'BUILTIN\Users:(OI)(CI)(RX)' /T /C /Q"
 } else {
     Write-Host "Skipping..." -ForegroundColor Red
 }
