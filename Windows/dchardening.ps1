@@ -724,6 +724,172 @@ function Import-GPOs {
 }
 
 
+
+function Run-Find-Perms {
+    write-host "nathan section here, fixing bad file perms"
+    # Fix Program Files automatically
+    icacls "C:\Program Files" /grant 'BUILTIN\Users:(OI)(CI)(RX)' /T /C /Q
+    icacls "C:\Program Files (x86)" /grant 'BUILTIN\Users:(OI)(CI)(RX)' /T /C /Q
+
+    # Get SIDs
+    $usersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-32-545")
+    $authUsersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-11")
+
+    $excludedPaths = @(
+        "C:\Windows\Temp", "C:\Windows\Tasks", "C:\Windows\System32\Tasks",
+        "C:\Windows\SysWOW64\Tasks", "C:\Windows\System32\spool\PRINTERS",
+        "C:\Windows\System32\spool\drivers\color", "C:\Windows\System32\spool\SERVERS",
+        "C:\Windows\System32\com\dmp", "C:\Windows\SysWOW64\com\dmp",
+        "C:\Windows\System32\fxstmp", "C:\Windows\SysWOW64\fxstmp", "C:\Windows\Tracing",
+        "C:\Windows\Registration\CRMLog", "C:\Windows\System32\winevt\Logs",
+        "C:\Windows\System32\LogFiles", "C:\Windows\System32\wbem\Logs",
+        "C:\Windows\System32\Microsoft\Crypto\RSA\MachineKeys",
+        "C:\Windows\ServiceProfiles\LocalService", "C:\Windows\ServiceProfiles\NetworkService"
+    )
+
+    Write-Host "Scanning C:\Windows for unexpected writable folders..." -ForegroundColor Cyan
+    Write-Host "Ignoring known required folders (like Temp, Tasks, spool)..."
+
+    Get-ChildItem -Path "C:\Windows" -Directory -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+        $path = $_.FullName
+        
+        $isExcluded = $false
+        foreach ($excluded in $excludedPaths) {
+            if ($path -like "$excluded*") {
+                $isExcluded = $true
+                break
+            }
+        }
+
+        if (-not $isExcluded) {
+            try {
+                $acl = Get-Acl -Path $path -ErrorAction SilentlyContinue
+                if ($null -eq $acl) { return }
+
+                foreach ($accessRule in $acl.Access) {
+                    if (($accessRule.IdentityReference.Value -eq $usersSid.Value) -or ($accessRule.IdentityReference.Value -eq $authUsersSid.Value)) {
+                        
+                        if ($accessRule.FileSystemRights -match "Write" -or $accessRule.FileSystemRights -match "Modify" -or $accessRule.FileSystemRights -match "FullControl") {
+                            
+                            Write-Host "--------------------------------"
+                            Write-Host "SUSPICIOUS Writable Folder Found:" -ForegroundColor Yellow
+                            Write-Host "Path: $path"
+                            Write-Host "FIXING... Setting to (Read & Execute) only." -ForegroundColor Green
+                            
+                            # --- AUTOMATED FIX ---
+                            icacls $path /grant 'BUILTIN\Users:(OI)(CI)(RX)' /C /Q
+                            
+                            Write-Host "--------------------------------"
+                            break 
+                        }
+                    }
+                }
+            } catch { }
+        }
+    }
+    Write-Host "C:\Windows permission scan complete."
+}
+
+
+
+function Run-Program-Perms {
+    # Get SIDs
+    $usersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-32-545")
+    $authUsersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-11")
+
+    Write-Host "Scanning services for writable executable paths..." -ForegroundColor Cyan
+
+    Get-CimInstance -ClassName Win32_Service | ForEach-Object {
+        $serviceName = $_.Name
+        $pathName = $_.PathName
+        
+        if ($pathName -like "C:\Windows\system32\*" -or [string]::IsNullOrEmpty($pathName)) {
+            return
+        }
+
+        $exePath = $pathName
+        if ($exePath.StartsWith('"')) {
+            $exePath = ($exePath.Substring(1) -split '"')[0]
+        } else {
+            $split = $exePath -split '(\.exe|\.sys)', 2, 'IgnoreCase'
+            if ($split.Count -gt 1) {
+                $exePath = $split[0] + $split[1]
+            }
+        }
+
+        try {
+            $directory = Split-Path -Path $exePath -Parent -ErrorAction Stop
+        } catch {
+            return
+        }
+
+        try {
+            $acl = Get-Acl -Path $directory -ErrorAction Stop
+            
+            foreach ($accessRule in $acl.Access) {
+                if (($accessRule.IdentityReference.Value -eq $usersSid.Value) -or ($accessRule.IdentityReference.Value -eq $authUsersSid.Value)) {
+                    
+                    if ($accessRule.FileSystemRights -match "Write" -or $accessRule.FileSystemRights -match "Modify" -or $accessRule.FileSystemRights -match "FullControl") {
+                        
+                        Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
+                        Write-Host "VULNERABLE SERVICE FOUND:" -ForegroundColor Red
+                        Write-Host "Service: $serviceName"
+                        Write-Host "Folder:  $directory"
+                        Write-Host "FIXING... Setting folder to (Read & Execute) only." -ForegroundColor Green
+                        
+                        # --- AUTOMATED FIX ---
+                        # We stop the service, fix perms, then restart it.
+                        Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+                        icacls $directory /grant 'BUILTIN\Users:(OI)(CI)(RX)' /T /C /Q
+                        Start-Service -Name $serviceName -ErrorAction SilentlyContinue
+
+                        Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                        break
+                    }
+                }
+            }
+        } catch { }
+    }
+    Write-Host "Service permission scan complete."
+}
+
+
+
+
+
+
+function Run-smb-paths {
+    Write-Host "Searching for and fixing unquoted service paths..." -ForegroundColor Cyan
+    
+    # --- AUTOMATED FIX ---
+    Get-CimInstance -ClassName Win32_Service | Where-Object { $_.PathName -notlike '"*' -and $_.PathName -like '* *' } | ForEach-Object {
+        $serviceName = $_.Name
+        $pathName = $_.PathName
+        Write-Host "Fixing unquoted path for: $serviceName" -ForegroundColor Yellow
+        Write-Host "Path: $pathName"
+        # The fix command:
+        sc.exe config $serviceName binPath= ('"' + $pathName + '"')
+    }
+    Write-Host "Unquoted service path scan complete." -ForegroundColor Green
+
+    Write-Host "---"
+    Write-Host "Searching for insecure SMB shares..." -ForegroundColor Cyan
+    Get-SmbShare | ForEach-Object {
+        $share = $_
+        Get-SmbShareAccess -Name $share.Name | ForEach-Object {
+            if ($_.AccountName -eq "Everyone" -or $_.AccountName -eq "Authenticated Users") {
+                Write-Host "Insecure Share Found: $($share.Name)" -ForegroundColor Red
+                Write-Host "Removing access for: $($_.AccountName)"
+                
+                # --- AUTOMATED FIX ---
+                Unblock-SmbShareAccess -Name $share.Name -AccountName $_.AccountName -Force
+            }
+        }
+    }
+    Write-Host "SMB Share scan complete." -ForegroundColor Green
+}
+
+
 function Install-EternalBluePatch {
     try {
         $patchURLsFromJSON = Get-Content -Raw -Path $patchURLFile | ConvertFrom-Json
@@ -1438,6 +1604,30 @@ $confirmation = Prompt-Yes-No -Message "Enter the 'Harden IIS' function? THIS ON
 if ($confirmation.toLower() -eq "y") {
     Write-Host "`n***Hardening IIS...***" -ForegroundColor Magenta
     Harden-IIS
+} else {
+    Write-Host "Skipping..." -ForegroundColor Red
+}
+
+$confirmation = Prompt-Yes-No -Message "Scan and fix bad file permissions on C:\Program Files and C:\Windows? (y/n)"
+if ($confirmation.toLower() -eq "y") {
+    Write-Host "`n***Fixing bad file permissions...***" -ForegroundColor Magenta
+    Run-Find-Perms
+} else {
+    Write-Host "Skipping..." -ForegroundColor Red
+}
+
+$confirmation = Prompt-Yes-No -Message "Scan and fix vulnerable service executable permissions? (y/n)"
+if ($confirmation.toLower() -eq "y") {
+    Write-Host "`n***Fixing vulnerable service permissions...***" -ForegroundColor Magenta
+    Run-Program-Perms
+} else {
+    Write-Host "Skipping..." -ForegroundColor Red
+}
+
+$confirmation = Prompt-Yes-No -Message "Scan and fix unquoted service paths and insecure SMB shares? (y/n)"
+if ($confirmation.toLower() -eq "y") {
+    Write-Host "`n***Fixing service paths and SMB shares...***" -ForegroundColor Magenta
+    Run-smb-paths
 } else {
     Write-Host "Skipping..." -ForegroundColor Red
 }
