@@ -627,178 +627,168 @@ function Run-Windows-Updates {
 }
 
 function Run-Find-Perms {
-write-host "nathan section here, fixing bad file perms"
-icacls "C:\Program Files" /grant 'BUILTIN\Users:(OI)(CI)(RX)' /T /C /Q
-icacls "C:\Program Files (x86)" /grant 'BUILTIN\Users:(OI)(CI)(RX)' /T /C /Q
+    write-host "nathan section here, fixing bad file perms"
+    # Fix Program Files automatically
+    icacls "C:\Program Files" /grant 'BUILTIN\Users:(OI)(CI)(RX)' /T /C /Q
+    icacls "C:\Program Files (x86)" /grant 'BUILTIN\Users:(OI)(CI)(RX)' /T /C /Q
 
+    # Get SIDs
+    $usersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-32-545")
+    $authUsersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-11")
 
-# --- List of known-good writable folders to IGNORE ---
-# We ignore these because they are required by the OS.
-# Your AppLocker rules are the correct way to mitigate these.
-$excludedPaths = @(
-    "C:\Windows\Temp",
-    "C:\Windows\Tasks",
-    "C:\Windows\System32\Tasks",
-    "C:\Windows\SysWOW64\Tasks",
-    "C:\Windows\System32\spool\PRINTERS",
-    "C:\Windows\System32\spool\drivers\color",
-    "C:\Windows\System32\spool\SERVERS",
-    "C:\Windows\System32\com\dmp",
-    "C:\Windows\SysWOW64\com\dmp",
-    "C:\Windows\System32\fxstmp",
-    "C:\Windows\SysWOW64\fxstmp",
-    "C:\Windows\Tracing",
-    "C:\Windows\Registration\CRMLog",
-    "C:\Windows\System32\winevt\Logs",
-    "C:\Windows\System32\LogFiles",
-    "C:\Windows\System32\wbem\Logs",
-    "C:\Windows\System32\Microsoft\Crypto\RSA\MachineKeys",
-    "C:\Windows\ServiceProfiles\LocalService",
-    "C:\Windows\ServiceProfiles\NetworkService"
-)
+    $excludedPaths = @(
+        "C:\Windows\Temp", "C:\Windows\Tasks", "C:\Windows\System32\Tasks",
+        "C:\Windows\SysWOW64\Tasks", "C:\Windows\System32\spool\PRINTERS",
+        "C:\Windows\System32\spool\drivers\color", "C:\Windows\System32\spool\SERVERS",
+        "C:\Windows\System32\com\dmp", "C:\Windows\SysWOW64\com\dmp",
+        "C:\Windows\System32\fxstmp", "C:\Windows\SysWOW64\fxstmp", "C:\Windows\Tracing",
+        "C:\Windows\Registration\CRMLog", "C:\Windows\System32\winevt\Logs",
+        "C:\Windows\System32\LogFiles", "C:\Windows\System32\wbem\Logs",
+        "C:\Windows\System32\Microsoft\Crypto\RSA\MachineKeys",
+        "C:\Windows\ServiceProfiles\LocalService", "C:\Windows\ServiceProfiles\NetworkService"
+    )
 
-Write-Host "Scanning C:\Windows for unexpected writable folders..." -ForegroundColor Cyan
-Write-Host "Ignoring known required folders (like Temp, Tasks, spool)..."
+    Write-Host "Scanning C:\Windows for unexpected writable folders..." -ForegroundColor Cyan
+    Write-Host "Ignoring known required folders (like Temp, Tasks, spool)..."
 
-Get-ChildItem -Path "C:\Windows" -Directory -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-    $path = $_.FullName
-    
-    # Check if the current path is one of the known-good excluded paths
-    $isExcluded = $false
-    foreach ($excluded in $excludedPaths) {
-        if ($path -like "$excluded*" ) {
-            $isExcluded = $true
-            break
+    Get-ChildItem -Path "C:\Windows" -Directory -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+        $path = $_.FullName
+        
+        $isExcluded = $false
+        foreach ($excluded in $excludedPaths) {
+            if ($path -like "$excluded*") {
+                $isExcluded = $true
+                break
+            }
+        }
+
+        if (-not $isExcluded) {
+            try {
+                $acl = Get-Acl -Path $path -ErrorAction SilentlyContinue
+                if ($null -eq $acl) { return }
+
+                foreach ($accessRule in $acl.Access) {
+                    if (($accessRule.IdentityReference.Value -eq $usersSid.Value) -or ($accessRule.IdentityReference.Value -eq $authUsersSid.Value)) {
+                        
+                        if ($accessRule.FileSystemRights -match "Write" -or $accessRule.FileSystemRights -match "Modify" -or $accessRule.FileSystemRights -match "FullControl") {
+                            
+                            Write-Host "--------------------------------"
+                            Write-Host "SUSPICIOUS Writable Folder Found:" -ForegroundColor Yellow
+                            Write-Host "Path: $path"
+                            Write-Host "FIXING... Setting to (Read & Execute) only." -ForegroundColor Green
+                            
+                            # --- AUTOMATED FIX ---
+                            icacls $path /grant 'BUILTIN\Users:(OI)(CI)(RX)' /C /Q
+                            
+                            Write-Host "--------------------------------"
+                            break 
+                        }
+                    }
+                }
+            } catch { }
         }
     }
+    Write-Host "C:\Windows permission scan complete."
+}
 
-    # If it's NOT in the exclusion list, then we analyze its permissions
-    if (-not $isExcluded) {
+
+
+function Run-Program-Perms {
+    # Get SIDs
+    $usersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-32-545")
+    $authUsersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-11")
+
+    Write-Host "Scanning services for writable executable paths..." -ForegroundColor Cyan
+
+    Get-CimInstance -ClassName Win32_Service | ForEach-Object {
+        $serviceName = $_.Name
+        $pathName = $_.PathName
+        
+        if ($pathName -like "C:\Windows\system32\*" -or [string]::IsNullOrEmpty($pathName)) {
+            return
+        }
+
+        $exePath = $pathName
+        if ($exePath.StartsWith('"')) {
+            $exePath = ($exePath.Substring(1) -split '"')[0]
+        } else {
+            $split = $exePath -split '(\.exe|\.sys)', 2, 'IgnoreCase'
+            if ($split.Count -gt 1) {
+                $exePath = $split[0] + $split[1]
+            }
+        }
+
         try {
-            $acl = Get-Acl -Path $path -ErrorAction SilentlyContinue
-            if ($null -eq $acl) { return }
+            $directory = Split-Path -Path $exePath -Parent -ErrorAction Stop
+        } catch {
+            return
+        }
 
-            # Check each access rule
+        try {
+            $acl = Get-Acl -Path $directory -ErrorAction Stop
+            
             foreach ($accessRule in $acl.Access) {
-                # Check if the rule is for 'Users' or 'Authenticated Users' and if it grants write/modify
                 if (($accessRule.IdentityReference.Value -eq $usersSid.Value) -or ($accessRule.IdentityReference.Value -eq $authUsersSid.Value)) {
                     
                     if ($accessRule.FileSystemRights -match "Write" -or $accessRule.FileSystemRights -match "Modify" -or $accessRule.FileSystemRights -match "FullControl") {
                         
-                        # Found one!
-                        Write-Host "--------------------------------"
-                        Write-Host "SUSPICIOUS Writable Folder Found:" -ForegroundColor Yellow
-                        Write-Host "Path: $path"
-                        Write-Host "User: $($accessRule.IdentityReference)"
-                        Write-Host "Rights: $($accessRule.FileSystemRights)"
-                        Write-Host "--------------------------------"
+                        Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
+                        Write-Host "VULNERABLE SERVICE FOUND:" -ForegroundColor Red
+                        Write-Host "Service: $serviceName"
+                        Write-Host "Folder:  $directory"
+                        Write-Host "FIXING... Setting folder to (Read & Execute) only." -ForegroundColor Green
                         
-                        # Stop checking this folder's rules and move to the next folder
-                        break 
+                        # --- AUTOMATED FIX ---
+                        # We stop the service, fix perms, then restart it.
+                        Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+                        icacls $directory /grant 'BUILTIN\Users:(OI)(CI)(RX)' /T /C /Q
+                        Start-Service -Name $serviceName -ErrorAction SilentlyContinue
+
+                        Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                        break
                     }
                 }
             }
-        } catch {
-            # This will catch "Access Denied" errors, which are fine.
-        }
+        } catch { }
     }
+    Write-Host "Service permission scan complete."
 }
 
-Write-Host "Scan complete."
 
 
 
 
-
-}
-
-function Run-Program-Perms{
-# Get the SIDs (Security Identifiers) for common user groups
-$usersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-32-545") # BUILTIN\Users
-$authUsersSid = [System.Security.Principal.SecurityIdentifier]::new("S-1-5-11") # Authenticated Users
-
-Write-Host "Scanning services for writable executable paths..." -ForegroundColor Cyan
-
-# Get all services
-Get-CimInstance -ClassName Win32_Service | ForEach-Object {
-    $serviceName = $_.Name
-    $pathName = $_.PathName
-    
-    # Skip system services in C:\Windows\System32
-    if ($pathName -like "C:\Windows\system32\*" -or [string]::IsNullOrEmpty($pathName)) {
-        return
-    }
-
-    # --- Parse the executable path ---
-    # This is tricky because paths can be "C:\App\app.exe" -arg or just C:\App\app.exe
-    $exePath = $pathName
-    if ($exePath.StartsWith('"')) {
-        # Path is quoted, e.g., "C:\Program Files\App\service.exe" -k
-        $exePath = ($exePath.Substring(1) -split '"')[0]
-    } else {
-        # Path is not quoted, e.g., C:\App\service.exe -k
-        # We find the first .exe or .sys and split there
-        $split = $exePath -split '(\.exe|\.sys)', 2, 'IgnoreCase'
-        if ($split.Count -gt 1) {
-            $exePath = $split[0] + $split[1]
-        }
-    }
-
-    # Now get the parent directory
-    try {
-        $directory = Split-Path -Path $exePath -Parent -ErrorAction Stop
-    } catch {
-        Write-Host "Could not parse path for service: $serviceName ($pathName)" -ForegroundColor Gray
-        return
-    }
-
-    # --- Check the directory's ACL ---
-    try {
-        $acl = Get-Acl -Path $directory -ErrorAction Stop
-        
-        foreach ($accessRule in $acl.Access) {
-            if (($accessRule.IdentityReference.Value -eq $usersSid.Value) -or ($accessRule.IdentityReference.Value -eq $authUsersSid.Value)) {
-                
-                if ($accessRule.FileSystemRights -match "Write" -or $accessRule.FileSystemRights -match "Modify" -or $accessRule.FileSystemRights -match "FullControl") {
-                    
-                    Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
-                    Write-Host "VULNERABLE SERVICE FOUND:" -ForegroundColor Red
-                    Write-Host "Service: $serviceName"
-                    Write-Host "Path:    $pathName"
-                    Write-Host "Folder:  $directory"
-                    Write-Host "User:    $($accessRule.IdentityReference)"
-                    Write-Host "Rights:  $($accessRule.FileSystemRights)"
-                    Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                    
-                    break # Move to the next service
-                }
-            }
-        }
-    } catch {
-        # This will catch "Path not found" or "Access Denied" errors, which are fine.
-    }
-}
-
-Write-Host "Service scan complete."
-
-}
 
 function Run-smb-paths {
-write-host "all programs with unquoted paths"
-Get-CimInstance -ClassName Win32_Service | Where-Object { $_.PathName -notlike '"*' -and $_.PathName -like '* *' } | Select-Object Name, PathName, StartMode
-Write-Host "fix with the following:"
-Write-Host 'sc.exe config "BadSvc" binPath= \'"C:\Program Files\Some App\service.exe"\''
+    Write-Host "Searching for and fixing unquoted service paths..." -ForegroundColor Cyan
+    
+    # --- AUTOMATED FIX ---
+    Get-CimInstance -ClassName Win32_Service | Where-Object { $_.PathName -notlike '"*' -and $_.PathName -like '* *' } | ForEach-Object {
+        $serviceName = $_.Name
+        $pathName = $_.PathName
+        Write-Host "Fixing unquoted path for: $serviceName" -ForegroundColor Yellow
+        Write-Host "Path: $pathName"
+        # The fix command:
+        sc.exe config $serviceName binPath= ('"' + $pathName + '"')
+    }
+    Write-Host "Unquoted service path scan complete." -ForegroundColor Green
 
-Write-Host "here are ur smb shares:"
-Get-SmbShare | ForEach-Object {
-    Write-Host "Share: $($_.Name)" -ForegroundColor Yellow
-    Get-SmbShareAccess -Name $_.Name
     Write-Host "---"
+    Write-Host "Searching for insecure SMB shares..." -ForegroundColor Cyan
+    Get-SmbShare | ForEach-Object {
+        $share = $_
+        Get-SmbShareAccess -Name $share.Name | ForEach-Object {
+            if ($_.AccountName -eq "Everyone" -or $_.AccountName -eq "Authenticated Users") {
+                Write-Host "Insecure Share Found: $($share.Name)" -ForegroundColor Red
+                Write-Host "Removing access for: $($_.AccountName)"
+                
+                # --- AUTOMATED FIX ---
+                Unblock-SmbShareAccess -Name $share.Name -AccountName $_.AccountName -Force
+            }
+        }
+    }
+    Write-Host "SMB Share scan complete." -ForegroundColor Green
 }
-Write-Host "block with:"
-Write-Host 'Unblock-SmbShareAccess -Name "Data" -AccountName "Everyone"'
-}
-
 
 function Run-StanfordHarden {
 # Taken from Stanford Repo. Edited by BYU
