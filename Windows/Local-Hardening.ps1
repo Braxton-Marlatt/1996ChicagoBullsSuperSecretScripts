@@ -783,6 +783,22 @@ Write-Host "Service scan complete."
 
 }
 
+function Run-smb-paths {
+write-host "all programs with unquoted paths"
+Get-CimInstance -ClassName Win32_Service | Where-Object { $_.PathName -notlike '"*' -and $_.PathName -like '* *' } | Select-Object Name, PathName, StartMode
+Write-Host "fix with the following:"
+Write-Host 'sc.exe config "BadSvc" binPath= \'"C:\Program Files\Some App\service.exe"\''
+
+Write-Host "here are ur smb shares:"
+Get-SmbShare | ForEach-Object {
+    Write-Host "Share: $($_.Name)" -ForegroundColor Yellow
+    Get-SmbShareAccess -Name $_.Name
+    Write-Host "---"
+}
+Write-Host "block with:"
+Write-Host 'Unblock-SmbShareAccess -Name "Data" -AccountName "Everyone"'
+}
+
 
 function Run-StanfordHarden {
 # Taken from Stanford Repo. Edited by BYU
@@ -1268,6 +1284,16 @@ if ($confirmation.toLower() -eq "y") {
 } else {
     Write-Host "Skipping..." -ForegroundColor Red
 }
+
+$confirmation = Prompt-Yes-No -Message "Enter the 'fix smb and server paths' function? (y/n)"
+if ($confirmation.toLower() -eq "y") {
+    Write-Host "`n***Running Windows Updater***" -ForegroundColor Magenta
+    Run-smb-paths
+} else {
+    Write-Host "Skipping..." -ForegroundColor Red
+}
+
+
 
 $confirmation = Prompt-Yes-No -Message "Enter the 'Run Windows Updates' function? (y/n) This might take a while"
 if ($confirmation.toLower() -eq "y") {
