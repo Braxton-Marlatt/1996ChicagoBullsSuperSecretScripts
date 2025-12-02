@@ -14,7 +14,8 @@ while IFS=: read -r username _ uid _ _ _ shell; do
     if [[ "${shell#*"sh"}" != "$shell" ]]; then
         # Skip root and system accounts (UID < 1000)
         if [[ "$username" != "root" && "$uid" -ge 1000 ]]; then
-            newpass=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 15)
+            read -sp "Enter new password for $username: " newpass
+            echo
             echo "$username,$newpass" | tee -a "$output_file" >/dev/null
 
             if command -v chpasswd >/dev/null 2>&1; then
