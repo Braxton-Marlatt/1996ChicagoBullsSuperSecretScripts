@@ -51,16 +51,14 @@ complain_profiles=$(sudo aa-status --complain 2>/dev/null | grep -v "^[0-9]" | g
 if [ -n "$complain_profiles" ]; then
     echo "    Profiles in complain mode:"
     echo "$complain_profiles"
-    
-    read -p "    Enforce all complain mode profiles? [y/N] " enforce_confirm
-    if [[ "$enforce_confirm" =~ ^[Yy]$ ]]; then
-        while IFS= read -r profile; do
-            if [ -n "$profile" ]; then
-                echo "    → Enforcing: $profile"
-                sudo aa-enforce "$profile" 2>/dev/null
-            fi
-        done <<< "$complain_profiles"
-    fi
+
+    echo "    [+] Automatically enforcing all complain mode profiles..."
+    while IFS= read -r profile; do
+        if [ -n "$profile" ]; then
+            echo "    → Enforcing: $profile"
+            sudo aa-enforce "$profile" 2>/dev/null
+        fi
+    done <<< "$complain_profiles"
 else
     echo "    [✓] No profiles in complain mode"
 fi
