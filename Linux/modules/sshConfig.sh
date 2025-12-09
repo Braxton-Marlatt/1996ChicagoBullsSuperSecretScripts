@@ -79,7 +79,7 @@ update_ssh_setting "ChallengeResponseAuthentication" "no"
 
 
 # Public key authentication
-update_ssh_setting "PubkeyAuthentication" "yes"
+update_ssh_setting "PubkeyAuthentication" "no"
 update_ssh_setting "AuthorizedKeysFile" ".ssh/authorized_keys"
 
 # Disable dangerous authentication methods
