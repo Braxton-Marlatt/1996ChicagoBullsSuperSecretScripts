@@ -47,12 +47,19 @@ while IFS=: read -r username _ uid _ _ _ shell; do
         if [[ "$shell" == */bash || "$shell" == */sh || "$shell" == */zsh ]]; then
             echo "[-] Locking account: $username"
             sudo passwd -l "$username"
+            # Set the account to expire, prevents logging in through other
+	        # methods like ssh keys too.
+	        # Use "chage -E -1 $username" to reverse
+            sudo chage -E 0 "$username"
         fi
     fi
 done < /etc/passwd
 
 echo ""
 echo "[✓] All other user accounts have been locked."
+echo "    To reverse account lock, run:"
+echo "        passwd -u <username>"
+echo "        chage -E -1 <username>"
 echo "----------------------------------------"
 echo "Allowed accounts:"
 echo "  • root"
