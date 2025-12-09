@@ -1,75 +1,26 @@
 #!/bin/bash
-# cronControl usage: cronControl [--clear] [--revert]
+# WARNING: This script will clear ALL cron jobs on this system:
+# - all user crontabs
+# - the system crontab (/etc/crontab)
+# - files in /etc/cron.d, /etc/cron.{hourly,daily,weekly,monthly}
+# Run as root.
 
-# Check all user crontabs
-for user in $(cut -f1 -d: /etc/passwd); do 
-    crontab -u $user -l 2>/dev/null
-done
+echo "Clearing all user crontabs..."
+while IFS=: read -r user _; do
+    crontab -r -u "$user" 2>/dev/null || true
+done < /etc/passwd
 
-# Check system cron
-cat /etc/crontab
-ls -la /etc/cron.*
-sys=$(command -v service || command -v systemctl || command -v rc-service)
-
-CHECKERR() {
-    if [ ! $? -eq 0 ]; then
-        echo "ERROR"
-        exit 1
-    else
-        echo Success
-    fi
-}
-
-# Default options
-CLEAR=0
-REVERT=0
-
-# Parse command-line arguments
-for arg in "$@"; do
-    case $arg in
-        --clear)
-            CLEAR=1
-            ;;
-        --revert)
-            REVERT=1
-            ;;
-        *)
-            echo "Unknown option: $arg"
-            exit 1
-            ;;
-    esac
-done
-
-# Clear cron jobs if requested
-if [ "$CLEAR" -eq 1 ]; then
-    echo "Clearing all user cron jobs..."
-    crontab -r
-    CHECKERR
-    if [ -f /etc/crontab ]; then
-        echo > /etc/crontab
-        CHECKERR
-    fi
-    echo "All cron jobs cleared."
-    exit 0
+echo "Clearing system crontab (/etc/crontab)..."
+if [ -f /etc/crontab ]; then
+    : > /etc/crontab 2>/dev/null || echo "Could not truncate /etc/crontab"
 fi
 
-# Start or stop cron based on --revert
-if [ "$REVERT" -eq 1 ]; then
-    if [ -f "/etc/rc.d/cron" ]; then
-        /etc/rc.d/cron restart
-        CHECKERR
-    else
-        $sys cron start || $sys restart cron || $sys crond start || $sys restart crond 
-        CHECKERR
+echo "Clearing cron.d and periodic cron directories..."
+for d in /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly; do
+    if [ -d "$d" ]; then
+        # Remove all regular files (leave directory + special files alone)
+        find "$d" -type f -exec rm -f {} + 2>/dev/null
     fi
-    echo "cron started"
-else
-    if [ -f "/etc/rc.d/cron" ]; then
-        /etc/rc.d/cron stop
-        CHECKERR
-    else
-        $sys cron stop || $sys stop cron || $sys crond stop || $sys stop crond
-        CHECKERR
-    fi
-    echo "cron stopped"
-fi
+done
+
+echo "All cron jobs cleared."
