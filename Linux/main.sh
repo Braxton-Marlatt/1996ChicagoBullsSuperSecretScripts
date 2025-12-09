@@ -5,7 +5,7 @@ MODULE_DIR="./modules"
 UTILS_DIR="./utils"
 
 # Source shared functions if needed
-source "$UTILS_DIR/common.sh"
+#source "$UTILS_DIR/common.sh"
 
 show_help() {
     echo "Usage: $0 [option]"
@@ -30,7 +30,7 @@ run_module() {
     local file="$MODULE_DIR/$module.sh"
     if [[ -f "$file" ]]; then
         echo ">>> Running module: $module"
-        source "$file"
+        #source "$file"
         echo ">>> $module complete"
     else
         echo "Error: Module '$module' not found."
