@@ -63,13 +63,17 @@ netsh advfirewall firewall add rule name="UDP Outbound SMB" dir=out action=block
 Write-Host "All necessary files should be in this dir." -ForegroundColor Green
 
 # Copy local hardening script to sysvol so local hardening can start ASAP without pulling down the script on each machine
-$domainDN = (Get-ADDomain).DistinguishedName
-cp "./$localHardeningFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$localHardeningFile"
-cp "./$wwHardeningFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$wwHardeningFile"
-cp "./$portsFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$portsFile"
-cp "./$advancedAuditingFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$advancedAuditingFile"
-cp "./$patchURLFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$patchURLFile"
-cp "./$startupFile" "\\$env:USERDNSDOMAIN\sysvol\$env:USERDNSDOMAIN\$startupFile"
+$DestPath = "\\$env:USERDNSDOMAIN\NETLOGON"
+
+# Ensure we only copy the files defined in variables at the start that are in the current dir
+Copy-Item "./$localHardeningFile" "$DestPath\$localHardeningFile" -Force
+Copy-Item "./$wwHardeningFile" "$DestPath\$wwHardeningFile" -Force
+Copy-Item "./$portsFile" "$DestPath\$portsFile" -Force
+Copy-Item "./$advancedAuditingFile" "$DestPath\$advancedAuditingFile" -Force
+Copy-Item "./$patchURLFile" "$DestPath\$patchURLFile" -Force
+Copy-Item "./$startupFile" "$DestPath\$startupFile" -Force
+
+Write-Host "Files copied to $DestPath" -ForegroundColor Green
 
 function GetCompetitionUsers {
     try {
