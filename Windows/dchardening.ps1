@@ -44,22 +44,6 @@ foreach ($Group in $Groups) {
     }
 }
 Write-Host "DEBUG: Finished group member export loop."
-
-# Block SMB initially, we'll turn it back on in the firewall section
-# Inbound rules
-netsh advfirewall firewall add rule name="TCP Inbound SMB" dir=in action=block protocol=TCP localport=139
-netsh advfirewall firewall add rule name="UDP Inbound SMB" dir=in action=block protocol=UDP localport=139
-# Outbound rules
-netsh advfirewall firewall add rule name="TCP Outbound SMB" dir=out action=block protocol=TCP localport=139
-netsh advfirewall firewall add rule name="UDP Outbound SMB" dir=out action=block protocol=UDP localport=139
-
-# Inbound rules
-netsh advfirewall firewall add rule name="TCP Inbound SMB" dir=in action=block protocol=TCP localport=445
-netsh advfirewall firewall add rule name="UDP Inbound SMB" dir=in action=block protocol=UDP localport=445
-# Outbound rules
-netsh advfirewall firewall add rule name="TCP Outbound SMB" dir=out action=block protocol=TCP localport=445
-netsh advfirewall firewall add rule name="UDP Outbound SMB" dir=out action=block protocol=UDP localport=445
-
 Write-Host "All necessary files should be in this dir." -ForegroundColor Green
 
 # Copy local hardening script to sysvol so local hardening can start ASAP without pulling down the script on each machine
@@ -891,45 +875,6 @@ function Run-smb-paths {
         }
     }
     Write-Host "SMB Share scan complete." -ForegroundColor Green
-}
-
-
-function Install-EternalBluePatch {
-    try {
-        $patchURLsFromJSON = Get-Content -Raw -Path $patchURLFile | ConvertFrom-Json
-        # Determine patch URL based on OS version keywords
-        $patchURL = switch -Regex ($osVersion) {
-            '(?i)Vista'  { $patchURLsFromJSON.Vista; break }
-            'Windows 7'  { $patchURLsFromJSON.'Windows 7'; break }
-            'Windows 8'  { $patchURLsFromJSON.'Windows 8'; break }
-            '2008 R2'    { $patchURLsFromJSON.'2008 R2'; break }
-            '2008'       { $patchURLsFromJSON.'2008'; break }
-            '2012 R2'    { $patchURLsFromJSON.'2012 R2'; break }
-            '2012'       { $patchURLsFromJSON.'2012'; break }
-            default { throw "Unsupported OS version: $osVersion" }
-        }
-		Write-Host $patchURL
-
-        # Download the patch to a temporary location
-        $path = "$env:TEMP\eternalblue_patch.msu"
-
-        Write-Host "Grabbing the patch file. Downloading it to $path" -ForegroundColor Cyan
-        $wc = New-Object net.webclient
-        $wc.Downloadfile($patchURL, $path)
-
-        # Install the patch
-        Start-Process -Wait -FilePath "wusa.exe" -ArgumentList "$path /quiet /norestart"
-
-        # Cleanup
-        Remove-Item -Path $path -Force
-
-        Write-Host "Patch for $OSVersion installed successfully!" -ForegroundColor Green
-        Update-Log "Install EternalBlue Patch" "Executed successfully"
-    } catch {
-        Write-Host $_.Exception.Message -ForegroundColor Yellow
-        Write-Host "Error Occurred..."
-        Update-Log "Install EternalBlue Patch" "Failed with error: $($_.Exception.Message)"
-    }
 }
 
 function Upgrade-SMB {
