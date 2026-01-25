@@ -628,40 +628,6 @@ function Global-Gpupdate {
     }
 }
 
-function Create-Good-GPO {
-    try {
-        Write-Host "Creating GPO named '$GPOName'..." -ForegroundColor Green
-        $newGPO = New-GPO -Name $GPOName
-
-        Write-Host "Fetching distinguished name of the domain..." -ForegroundColor Green
-        $domainDN = (Get-ADDomain).DistinguishedName
-
-        Write-Host "Linking GPO to the domain..." -ForegroundColor Green
-        New-GPLink -Name $GPOName -Target $domainDN
-		Write-Host "GPO linked successfully!" -ForegroundColor Green
-
-        Write-Host "Setting permissions for GPO..." -ForegroundColor Green
-        # Get the SID of the current user
-        $userSID = (New-Object System.Security.Principal.NTAccount($CurrentUser)).Translate([System.Security.Principal.SecurityIdentifier]).Value
-
-        # Set permissions for the creating user (full control)
-		try {
-			Set-GPPermissions -Name $GPOName -TargetName $CurrentUser -TargetType User -PermissionLevel GpoEdit
-			Write-Host "Permissions set successfully." -ForegroundColor Green
-		} catch {
-			Write-Host "Error setting permissions -- $_" -ForegroundColor Yellow
-		}
-		Write-Host "Go configure the GPO, specifically to deny the 'Apply Group Policy' for current user, before continuing" -ForegroundColor Black -BackgroundColor Yellow
-		Read-Host " "
-		Set-GPLink -Name $GPOName -Target $domainDN -Enforced Yes
-		Write-Host "GPO fully and successfully configured and enforced!" -ForegroundColor Green
-        Update-Log "Create Good GPO" "Executed successfully"
-    } catch {
-        Write-Host $_.Exception.Message -ForegroundColor Yellow
-        Write-Host "Error Occurred..."
-        Update-Log "Create Good GPO" "Failed with error: $($_.Exception.Message)"
-    }
-}
 
 function Import-GPOs {
     $gpos = Get-ChildItem ./gpos
@@ -1214,87 +1180,6 @@ function Create-OUs {
     New-ADOrganizationalUnit -Name "Databases" -ErrorAction SilentlyContinue
 } 
 
-function Change-DA-Passwords {
-    while ($true) {
-        try {
-            $pw = Read-Host -AsSecureString -Prompt "New password for Domain Admins:"
-            $conf = Read-Host -AsSecureString -Prompt "Confirm password for Domain Admins:"
-
-            # Convert SecureString to plain text
-            $pwPlainText = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($pw))
-            $confPlainText = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($conf))
-            if ($pwPlainText -eq $confPlainText -and $pwPlainText -ne "") {
-                #Get-ADGroup -Filter 'name -like "Domain Admins"' | Get-ADGroupMember | Where-Object objectClass -eq User | Set-ADAccountPassword -Reset -NewPassword $pw
-                Get-ADGroup -Filter 'name -like "Domain Admins"' | Get-ADGroupMember | Where-Object objectClass -eq User | Foreach-object {
-                    $stringAsStream = [System.IO.MemoryStream]::new()
-                    $writer = [System.IO.StreamWriter]::new($stringAsStream)
-                    $writer.write("$pwPlainText$($_.name)")
-                    $writer.Flush()
-                    $stringAsStream.Position = 0
-                    $newpw = (Get-FileHash -Algorithm SHA256 -InputStream $stringAsStream).hash
-                    $_ | Set-ADAccountPassword -Reset -NewPassword (ConvertTo-SecureString -AsPlainText -String ($newpw.Substring(0,12) + "!") -Force)
-                }
-                Write-Host "Success!!`n"
-
-                # Clear the plaintext passwords from memory
-                $pwPlainText = $null
-                $confPlainText = $null
-
-                # Optionally, force a garbage collection to reclaim memory (though this is not immediate)
-                [System.GC]::Collect()
-                $pw.Dispose()
-                $conf.Dispose()
-                break
-            } else {
-                Write-Host "Either the passwords didn't match, or you typed nothing" -ForegroundColor Yellow
-            } 
-        } catch {
-            Write-Host $_.Exception.Message "`n"
-            Write-Host "There was an error with your password submission. Try again...`n" -ForegroundColor Yellow
-        }
-    }
-}
-function Change-User-Passwords {
-    while ($true) {
-        try {
-            $pw = Read-Host -AsSecureString -Prompt "New password for non-Domain Admins:"
-            $conf = Read-Host -AsSecureString -Prompt "Confirm password for non-Domain Admins:"
-
-            # Convert SecureString to plain text
-            $pwPlainText = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($pw))
-            $confPlainText = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($conf))
-            if ($pwPlainText -eq $confPlainText -and $pwPlainText -ne "") {
-                #Get-ADGroup -Filter 'name -notlike "Domain Admins"' | Get-ADGroupMember | Where-Object objectClass -eq User | Set-ADAccountPassword -Reset -NewPassword $pw
-                Get-ADGroup -Filter 'name -notlike "Domain Admins"' | Get-ADGroupMember | Where-Object objectClass -eq User | Foreach-object {
-                    #$newpw = Get-FileHash -Algorithm SHA256 -InputStream [Text.Encoding]::Utf8.GetBytes("$pwPlainText$($_.name)") 
-                    $stringAsStream = [System.IO.MemoryStream]::new()
-                    $writer = [System.IO.StreamWriter]::new($stringAsStream)
-                    $writer.write("$pwPlainText$($_.name)")
-                    $writer.Flush()
-                    $stringAsStream.Position = 0
-                    $newpw = (Get-FileHash -Algorithm SHA256 -InputStream $stringAsStream).hash
-                    $_ | Set-ADAccountPassword -Reset -NewPassword (ConvertTo-SecureString -AsPlainText -String ($newpw.Substring(0,12) + "!") -Force)
-                }
-                Write-Host "Success!!`n"
-
-                # Clear the plaintext passwords from memory
-                $pwPlainText = $null
-                $confPlainText = $null
-
-                # Optionally, force a garbage collection to reclaim memory (though this is not immediate)
-                [System.GC]::Collect()
-                $pw.Dispose()
-                $conf.Dispose()
-                break
-            } else {
-                Write-Host "Either the passwords didn't match, or you typed nothing" -ForegroundColor Yellow
-            } 
-        } catch {
-            Write-Host $_.Exception.Message "`n"
-            Write-Host "There was an error with your password submission. Try again...`n" -ForegroundColor Yellow
-        }
-    }
-}
 
 function Enable-Disable-RDP {
     
@@ -1420,24 +1305,6 @@ $confirmation = Prompt-Yes-No -Message "Do Group Management? (y/n)"
 if ($confirmation.toLower() -eq "y") {
     Write-Host "`n***Doing Group Management...***" -ForegroundColor Magenta
     Group-Management
-} else {
-    Write-Host "Skipping..." -ForegroundColor Red
-}
-
-# Change DA Passwords
-$confirmation = Prompt-Yes-No -Message "Change DA passwords? (y/n)"
-if ($confirmation.toLower() -eq "y") {
-    Change-DA-Passwords
-    Write-Host "All DA passwords changed" -ForegroundColor Red
-} else {
-    Write-Host "Skipping..." -ForegroundColor Red
-}
-
-# Change normal User Passwords
-$confirmation = Prompt-Yes-No -Message "Change non-DA passwords? (y/n)"
-if ($confirmation.toLower() -eq "y") {
-    Change-User-Passwords
-    Write-Host "All non-DA passwords changed" -ForegroundColor Red
 } else {
     Write-Host "Skipping..." -ForegroundColor Red
 }
