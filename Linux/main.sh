@@ -30,7 +30,7 @@ run_module() {
     local file="$MODULE_DIR/$module.sh"
     if [[ -f "$file" ]]; then
         echo ">>> Running module: $module"
-        source "$file"
+        bash "$file"
         echo ">>> $module complete"
     else
         echo "Error: Module '$module' not found."
